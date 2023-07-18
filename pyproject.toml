@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "mchs-sms"
+version = "0.1.0"
+description = ""
+authors = ["Sergei Klimov <s.klimov@bk.ru>"]
+readme = "README.md"
+packages = [{include = "mchs_sms"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+trio = "^0.22.2"
+asks = "^3.0.0"
+
+[tool.poetry.group.dev.dependencies]
+flake9 = "^3.8.3.post2"
+black = "^23.7.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
