@@ -1,3 +1,4 @@
+import json
 import re
 import time
 from contextlib import suppress
@@ -9,32 +10,77 @@ import trio
 import asks
 
 import warnings
-from trio import TrioDeprecationWarning
+from trio import (
+    TrioDeprecationWarning,
+    open_memory_channel,
+    MemorySendChannel,
+    MemoryReceiveChannel,
+)
 
 warnings.filterwarnings(action="ignore", category=TrioDeprecationWarning)
 
-URL = "https://smsc.ru/sys/send.php"
+SEND_URL = "https://smsc.ru/sys/send.php"
+STATUS_URL = "https://smsc.ru/sys/status.php"
 MAX_CLIENTS = 1
 
 asks.init("trio")
 
 
 @dataclass
-class Message:
+class Credential:
     login: str
     psw: str
+
+
+@dataclass
+class Message:
     phones: str
     mes: str
     valid: int
 
 
-async def send_message(message: Message):
+@dataclass
+class Status:
+    phone: str
+    id: str
+    fmt: int = 3
+
+
+async def send_message(
+    credential: Credential, message: Message, send_channel: MemorySendChannel, /
+):
     start = time.time()
 
     print(asdict(message))
-    response = await asks.get(URL, params=urlencode(asdict(message)))
+    response = await asks.get(
+        SEND_URL, params=urlencode({**asdict(credential), **asdict(message)})
+    )
     content = response.text
-    print(f"{content} (выполнено за {time.time() - start})")
+    print(
+        f"Статус ответа {response.status_code}, ответ {content} (выполнено за {time.time() - start})"
+    )
+
+    if response.status_code == 200:
+        await send_channel.send((message.phones, content))
+
+
+async def get_status(credential: Credential, receive_channel: MemoryReceiveChannel, /):
+    async for (phones, content) in receive_channel:
+        if (numbers := re.findall(r"\d+", content)) and len(numbers) == 2:
+            sms_count = numbers[0]
+            sms_id = numbers[1]
+            print(f"Сообщения были отправлены на {sms_count} телефонных номеров")
+
+            for phone in re.split(";|,", phones):
+                status = Status(phone=phone, id=sms_id)
+                response = await asks.get(
+                    STATUS_URL, params={**asdict(credential), **asdict(status)}
+                )
+                content = response.json()
+                print(
+                    f"SMS отправлена на телефон {phone}. Статус:\n{json.dumps(content, indent=4)}"
+                )
+        break
 
 
 def validate_phones(ctx, param, value):
@@ -42,7 +88,7 @@ def validate_phones(ctx, param, value):
     Очищает строку с телефонами от 'паразитных' символов и проверяет её на содержание только цифр.
     """
     phones = value.replace("+", "").replace(" ", "")
-    for phone in re.split(';|,', phones):
+    for phone in re.split(";|,", phones):
         if not phone.isdigit():
             raise click.BadParameter("Номера телефонов должны содержать только цифры")
     return phones
@@ -66,11 +112,17 @@ def validate_phones(ctx, param, value):
 )
 @click.option("--mes", required=True, type=str, help="Текст сообщения.")
 async def main(login, psw, valid, phones, mes):
-    message = Message(login=login, psw=psw, valid=valid, phones=phones, mes=mes)
+    credential = Credential(
+        login=login,
+        psw=psw,
+    )
+    message = Message(valid=valid, phones=phones, mes=mes)
+    send_channel, receive_channel = open_memory_channel(0)
     start = time.time()
     async with trio.open_nursery() as nursery:
         for _ in range(MAX_CLIENTS):
-            nursery.start_soon(send_message, message)
+            nursery.start_soon(send_message, credential, message, send_channel)
+            nursery.start_soon(get_status, credential, receive_channel)
     print(f"завершено за {time.time() - start}")
 
 
