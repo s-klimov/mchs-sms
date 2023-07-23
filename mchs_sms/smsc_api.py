@@ -80,11 +80,15 @@ async def request_smsc(
         param_key = "json"
         param_value = payload
 
-    response = await asks.get(
+    response = await getattr(asks, http_method.value)(
         urljoin(SMSC_HOST, api_method), **{param_key: param_value}
     )
 
     return SmscResponse(content=response.json(), status_code=response.status_code)
+
+
+class SmscApiError(Exception):
+    pass
 
 
 async def send_message(message: Message, send_channel: MemorySendChannel, /):
@@ -96,8 +100,17 @@ async def send_message(message: Message, send_channel: MemorySendChannel, /):
         f"Статус ответа {response.status_code}, ответ {response.content} (выполнено за {time.time() - start})"
     )
 
-    if response.status_code == 200:
+    if response.status_code == 200 and response.content.get("error_code", 0) == 0:
         await send_channel.send((message.phones, response.content))
+    else:
+        raise SmscApiError(
+            "Ошибка отправки sms: ошибка %s, код ошибки %d, статус ответа %d"
+            % (
+                response.content.get("error"),
+                response.content.get("error_code"),
+                response.status_code,
+            )
+        )
 
 
 async def get_status(receive_channel: MemoryReceiveChannel, /):
