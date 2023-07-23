@@ -2,8 +2,11 @@ import json
 import re
 import time
 from contextlib import suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, asdict
-from urllib.parse import urlencode
+from enum import Enum
+from typing import Optional, NamedTuple, Mapping
+from urllib.parse import urlencode, urljoin
 
 import asyncclick as click
 import trio
@@ -19,17 +22,30 @@ from trio import (
 
 warnings.filterwarnings(action="ignore", category=TrioDeprecationWarning)
 
-SEND_URL = "https://smsc.ru/sys/send.php"
-STATUS_URL = "https://smsc.ru/sys/status.php"
+SMSC_HOST = "https://smsc.ru"
+SEND_URL = "rest/send/"
+STATUS_URL = "sys/status.php"
 MAX_CLIENTS = 1
 
 asks.init("trio")
 
 
-@dataclass
-class Credential:
-    login: str
-    psw: str
+smsc_login: ContextVar[str] = ContextVar("smsc_login")
+smsc_password: ContextVar[str] = ContextVar("smsc_password")
+
+
+class HttpMethod(str, Enum):
+    """Список используемых http-методов"""
+
+    get = "get"
+    post = "post"
+
+
+class SmscResponse(NamedTuple):
+    """Ответ сервиса по отправке sms-сообщений"""
+
+    content: Mapping
+    status_code: int
 
 
 @dataclass
@@ -46,41 +62,59 @@ class Status:
     fmt: int = 3
 
 
-async def send_message(
-    credential: Credential, message: Message, send_channel: MemorySendChannel, /
-):
+async def request_smsc(
+    http_method: HttpMethod,
+    api_method: str,
+    *,
+    login: Optional[str] = None,
+    password: Optional[str] = None,
+    payload: dict = {},
+) -> SmscResponse:
+    payload["login"] = login or smsc_login.get()
+    payload["psw"] = password or smsc_password.get()
+
+    if http_method.value == "get":
+        param_key = "params"
+        param_value = urlencode(payload)
+    else:
+        param_key = "json"
+        param_value = payload
+
+    response = await asks.get(
+        urljoin(SMSC_HOST, api_method), **{param_key: param_value}
+    )
+
+    return SmscResponse(content=response.json(), status_code=response.status_code)
+
+
+async def send_message(message: Message, send_channel: MemorySendChannel, /):
     start = time.time()
 
     print(asdict(message))
-    response = await asks.get(
-        SEND_URL, params=urlencode({**asdict(credential), **asdict(message)})
-    )
-    content = response.text
+    response = await request_smsc(HttpMethod.post, SEND_URL, payload=asdict(message))
     print(
-        f"Статус ответа {response.status_code}, ответ {content} (выполнено за {time.time() - start})"
+        f"Статус ответа {response.status_code}, ответ {response.content} (выполнено за {time.time() - start})"
     )
 
     if response.status_code == 200:
-        await send_channel.send((message.phones, content))
+        await send_channel.send((message.phones, response.content))
 
 
-async def get_status(credential: Credential, receive_channel: MemoryReceiveChannel, /):
-    async for (phones, content) in receive_channel:
-        if (numbers := re.findall(r"\d+", content)) and len(numbers) == 2:
-            sms_count = numbers[0]
-            sms_id = numbers[1]
-            print(f"Сообщения были отправлены на {sms_count} телефонных номеров")
+async def get_status(receive_channel: MemoryReceiveChannel, /):
+    async with receive_channel:
+        phones, content = await receive_channel.receive()
 
-            for phone in re.split(";|,", phones):
-                status = Status(phone=phone, id=sms_id)
-                response = await asks.get(
-                    STATUS_URL, params={**asdict(credential), **asdict(status)}
-                )
-                content = response.json()
-                print(
-                    f"SMS отправлена на телефон {phone}. Статус:\n{json.dumps(content, indent=4)}"
-                )
-        break
+        sms_id = content["id"]
+        print(f"Сообщения были отправлены на {content['cnt']} телефонных номеров")
+
+        for phone in re.split(";|,", phones):
+            status = Status(phone=phone, id=sms_id)
+            response = await request_smsc(
+                HttpMethod.get, STATUS_URL, payload=asdict(status)
+            )
+            print(
+                f"SMS отправлена на телефон {phone}. Статус:\n{json.dumps(response.content, indent=4)}"
+            )
 
 
 def validate_phones(ctx, param, value):
@@ -112,17 +146,16 @@ def validate_phones(ctx, param, value):
 )
 @click.option("--mes", required=True, type=str, help="Текст сообщения.")
 async def main(login, psw, valid, phones, mes):
-    credential = Credential(
-        login=login,
-        psw=psw,
-    )
+    smsc_login.set(login)
+    smsc_password.set(psw)
+
     message = Message(valid=valid, phones=phones, mes=mes)
     send_channel, receive_channel = open_memory_channel(0)
     start = time.time()
     async with trio.open_nursery() as nursery:
         for _ in range(MAX_CLIENTS):
-            nursery.start_soon(send_message, credential, message, send_channel)
-            nursery.start_soon(get_status, credential, receive_channel)
+            nursery.start_soon(send_message, message, send_channel)
+            nursery.start_soon(get_status, receive_channel)
     print(f"завершено за {time.time() - start}")
 
 
