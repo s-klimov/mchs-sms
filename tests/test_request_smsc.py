@@ -1,20 +1,33 @@
 from unittest.mock import patch
 
-from trio import open_memory_channel
-
-from mchs_sms.smsc_api import SmscResponse, send_message, Message
+from mchs_sms.smsc_api import request_smsc, HttpMethod, SEND_URL
 
 
-async def test_send_message():
-    with patch("mchs_sms.smsc_api.request_smsc") as mock_function:
-        expected = SmscResponse(content={"cnt": 2, "id": 430}, status_code=200)
-        mock_function.return_value = expected
+class MockSuccessResponse:
+    """Пример успешного ответа sms-сервиса после отправки сообщений"""
 
-        send_channel, receive_channel = open_memory_channel(0)
+    status_code = 200
 
-        await send_message(
-            Message(valid=1, phones="+7952", mes="Завтра ожидается гроза"),
-            send_channel,
+    @staticmethod
+    def json():
+        return {"id": 430, "cnt": 2}
+
+
+async def test_success_request_smsc():
+    """Тест функции request_smsc, проверяющий на выходе ответ сообщения от sms-сервиса"""
+    with patch("asks.post") as mock_function:
+        mock_function.return_value = MockSuccessResponse()
+        expected = await mock_function()
+        response = await request_smsc(
+            HttpMethod.post,
+            SEND_URL,
+            login="test_user",
+            password="test_password",
+            payload={
+                "phones": "79999999999",
+                "mes": "Завтра ожидается гроза",
+                "valid": 1,
+            },
         )
-
-    assert True
+    assert expected.json() == response.content
+    assert expected.status_code == response.status_code
