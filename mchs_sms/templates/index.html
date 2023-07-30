@@ -52,19 +52,23 @@
       <div class="row mt-4 mb-4" v-for="mailing in mailings">
         <div class="col-3">
           <p class="lead text-right mr-1">
-            {{mailing.date}}
+            {% raw %}
+              {{mailing.date}}
+            {% endraw %}
           </p>
         </div>
         <div class="col-9">
           <div class="progress mt-1" style="height: 20px;">
 
-            <div class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" :aria-valuenow="mailing.percentFulfilled" aria-valuemin="0" aria-valuemax="100" v-bind:style="{width:mailing.percentFulfilled+'%'}">{{mailing.percentFulfilled + '%'}}</div>
+            <div class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" :aria-valuenow="mailing.percentFulfilled" aria-valuemin="0" aria-valuemax="100" v-bind:style="{width:mailing.percentFulfilled+'%'}">{% raw %}{{mailing.percentFulfilled + '%'}}{% endraw %}</div>
 
-            <div class="progress-bar progress-bar-striped progress-bar-animated bg-danger" role="progressbar" :aria-valuenow="mailing.percentFailed" aria-valuemin="0" aria-valuemax="100" v-bind:style="{width:mailing.percentFailed+'%'}">{{mailing.percentFailed + '%'}}</div>
+            <div class="progress-bar progress-bar-striped progress-bar-animated bg-danger" role="progressbar" :aria-valuenow="mailing.percentFailed" aria-valuemin="0" aria-valuemax="100" v-bind:style="{width:mailing.percentFailed+'%'}">{% raw %}{{mailing.percentFailed + '%'}}{% endraw %}</div>
 
           </div>
           <p class="text-muted mt-2">
-            Рассылка #{{mailing.mailingId}}. {{mailing.SMSText}}
+            {% raw %}
+              Рассылка #{{mailing.mailingId}}. {{mailing.SMSText}}
+            {% endraw %}
           </p>
         </div>
       </div>
