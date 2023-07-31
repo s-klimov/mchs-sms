@@ -43,9 +43,31 @@ async def hello():
 
 @app.websocket("/ws")
 async def ws():
+    messages = {
+      "msgType": "SMSMailingStatus",
+      "SMSMailings": [
+        {
+          "timestamp": 1123131392.734,
+          "SMSText": "Сегодня гроза! Будьте осторожны!",
+          "mailingId": "1",
+          "totalSMSAmount": 345,
+          "deliveredSMSAmount": 47,
+          "failedSMSAmount": 5,
+        },
+        {
+          "timestamp": 1323141112.924422,
+          "SMSText": "Новогодняя акция!!! Приходи в магазин и получи скидку!!!",
+          "mailingId": "new-year",
+          "totalSMSAmount": 3993,
+          "deliveredSMSAmount": 801,
+          "failedSMSAmount": 0,
+        },
+      ]
+    }
+
     while True:
-        await websocket.send("hello")
-        await websocket.send_json({"hello": "world"})
+        await websocket.send_json(messages)
+        await trio.sleep(1)
 
 
 @app.route("/send/", methods=["POST"])
