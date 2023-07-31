@@ -2,7 +2,8 @@ import trio
 import trio_asyncio
 from hypercorn.trio import serve
 from hypercorn.config import Config as HyperConfig
-from pydantic import BaseModel, field_validator, ValidationError, constr, conint
+from pydantic import BaseModel, constr, conint, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from quart import render_template, redirect, request, url_for, websocket
 
 import asyncclick as click
@@ -24,8 +25,15 @@ class Message(BaseModel):
     phones: constr(
         strip_whitespace=True, pattern=r"^[+]?\d{10,11}([;|,][+]?\d{10,11}){0,}$"
     )
-    mes: str
+    mes: constr(min_length=5)
     valid: conint(ge=1, le=24)
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix='SMSC_')
+
+    login: str = Field(description="Логин для авторизации на сервисе smsc.ru.")
+    psw: str = Field(description="Пароль для авторизации на сервисе smsc.ru.")
 
 
 @app.route("/")
@@ -56,8 +64,6 @@ async def send_message():
 
 
 @click.command()
-@click.option("--login", envvar="SMSC_LOGIN", help="Логин клиента sms-сервиса.")
-@click.option("--psw", envvar="SMSC_PSW", help="Пароль клиента sms-сервиса.")
 @click.option(
     "--valid",
     type=int,
@@ -71,14 +77,17 @@ async def send_message():
     callback=validate_phones,
     help="Номер телефона или несколько номеров через запятую или точку с запятой.",
 )
-async def run_server(login, psw, valid, phones):
+async def run_server(valid, phones):
     async with trio_asyncio.open_loop():
         config = HyperConfig()
         config.bind = ["127.0.0.1:5000"]
         config.use_reloader = True
 
-        smsc_login.set(login)
-        smsc_password.set(psw)
+        conf = Settings().model_dump()
+
+        smsc_login.set(conf["login"])
+        smsc_password.set(conf["psw"])
+        app.config.from_prefixed_env()
         app.config["VALID"] = valid
         app.config["PHONES"] = phones
 
