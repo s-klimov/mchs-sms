@@ -19,6 +19,7 @@ poetry install
 export SMSC_LOGIN=devman
 export SMSC_PSW=Ab6Kinhyxquot
 export SMSC_VALID=1
+export REDIS_URL=redis://127.0.0.1:6379/0
 poetry run python mchs_sms/smsc_api.py 
 ```
 
