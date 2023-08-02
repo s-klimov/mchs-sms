@@ -1,4 +1,6 @@
 import asyncio
+from contextlib import suppress
+
 import aioredis
 import argparse
 
@@ -24,7 +26,7 @@ async def main():
     parser = create_argparser()
     args = parser.parse_args()
 
-    async with trio_asyncio.open_loop() as loop:
+    async with trio_asyncio.open_loop():
         redis = aioredis.from_url(args.redis_uri, decode_responses=True)
 
         try:
@@ -93,4 +95,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    trio.run(main)
+    with suppress(KeyboardInterrupt):
+        trio.run(main)
