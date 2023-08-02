@@ -1,6 +1,4 @@
 import asyncio
-from contextlib import suppress
-
 import aioredis
 import argparse
 
@@ -8,9 +6,6 @@ import trio
 import trio_asyncio
 
 from db import Database
-import warnings
-
-warnings.filterwarnings("ignore")
 
 
 def create_argparser():
@@ -29,32 +24,32 @@ async def main():
     parser = create_argparser()
     args = parser.parse_args()
 
-    redis = aioredis.from_url(args.redis_uri, decode_responses=True)
+    async with trio_asyncio.open_loop() as loop:
+        redis = aioredis.from_url(args.redis_uri, decode_responses=True)
 
-    try:
-        db = Database(redis)
+        try:
+            db = Database(redis)
 
-        sms_id = "1"
+            sms_id = "1"
 
-        phones = [
-            "+7 999 519 05 57",
-            "911",
-            "112",
-        ]
-        text = "Вечером будет шторм!"
+            phones = [
+                "+7 999 519 05 57",
+                "911",
+                "112",
+            ]
+            text = "Вечером будет шторм!"
 
-        async def work_with_db(sms_id, phones, text):
+            # await db.add_sms_mailing(sms_id, phones, text)
+            await trio_asyncio.aio_as_trio(db.add_sms_mailing)(sms_id, phones, text)
 
-            await db.add_sms_mailing(sms_id, phones, text)
-
-            sms_ids = await db.list_sms_mailings()
+            sms_ids = await trio_asyncio.aio_as_trio(db.list_sms_mailings)()
             print("Registered mailings ids", sms_ids)
 
-            pending_sms_list = await db.get_pending_sms_list()
+            pending_sms_list = await trio_asyncio.aio_as_trio(db.get_pending_sms_list)()
             print("pending:")
             print(pending_sms_list)
 
-            await db.update_sms_status_in_bulk(
+            await trio_asyncio.aio_as_trio(db.update_sms_status_in_bulk)(
                 [
                     # [sms_id, phone_number, status]
                     [sms_id, "112", "failed"],
@@ -64,46 +59,38 @@ async def main():
                 ]
             )
 
-            pending_sms_list = await db.get_pending_sms_list()
+            pending_sms_list = await trio_asyncio.aio_as_trio(db.get_pending_sms_list)()
             print("pending:")
             print(pending_sms_list)
 
-            sms_mailings = await db.get_sms_mailings("1")
+            sms_mailings = await trio_asyncio.aio_as_trio(db.get_sms_mailings)("1")
             print("sms_mailings")
             print(sms_mailings)
 
-        async with trio_asyncio.open_loop():
-            await trio_asyncio.aio_as_trio(work_with_db)(sms_id, phones, text)
+            async def send():
+                while True:
+                    await asyncio.sleep(1)
+                    await redis.publish("updates", sms_id)
 
-        async def send():
-            while True:
-                await trio.sleep(1)
-                await redis.publish("updates", sms_id)
+            async def listen():
+                channel = redis.pubsub()
+                await channel.subscribe("updates")
 
-        async def listen():
-            channel = redis.pubsub()
-            await channel.subscribe("updates")
+                while True:
+                    message = await channel.get_message(
+                        ignore_subscribe_messages=True, timeout=1.0
+                    )
 
-            while True:
-                message = await channel.get_message(
-                    ignore_subscribe_messages=True, timeout=1.0
-                )
+                    if not message:
+                        continue
 
-                if not message:
-                    continue
+                    print("Got message:", repr(message["data"]))
 
-                print("Got message:", repr(message["data"]))
+            await trio_asyncio.aio_as_trio(asyncio.gather)(send(), listen())
 
-        async with trio.open_nursery() as nursery:
-            nursery.start_soon(send)
-            nursery.start_soon(listen)
-
-        # await asyncio.gather(send(), listen())
-
-    finally:
-        await redis.close()
+        finally:
+            await redis.close()
 
 
 if __name__ == "__main__":
-    with suppress(KeyboardInterrupt):
-        trio.run(main)
+    trio.run(main)
