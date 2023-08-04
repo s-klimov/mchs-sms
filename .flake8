@@ -3,3 +3,4 @@ max-line-length=119
 max-doc-length=119
 max-complexity=10
 extend-exclude=venv,dist,conf,scripts,migrations
+extend-ignore=F722

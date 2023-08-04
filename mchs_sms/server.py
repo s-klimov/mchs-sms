@@ -1,32 +1,57 @@
+import re
+from unittest.mock import patch
+
+import aioredis
 import trio
 import trio_asyncio
 from hypercorn.trio import serve
 from hypercorn.config import Config as HyperConfig
-from pydantic import BaseModel, constr, conint, Field
+from pydantic import BaseModel, constr, conint, Field, field_serializer
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from quart import render_template, redirect, request, url_for, websocket
 
 import asyncclick as click
 from quart_trio import QuartTrio
 
+from mchs_sms.db import Database
 from mchs_sms.smsc_api import (
-    validate_phones,
-    smsc_login,
-    smsc_password,
+    smsc_login,  # FIXME убрать импорт контекстной переменной
+    smsc_password,  # FIXME убрать импорт контекстной переменной
     HttpMethod,
     SEND_URL,
     request_smsc,
 )
+from tests.test_request_smsc import MockSuccessResponse
 
 app = QuartTrio(__name__)
 
+PHONE_DELIMITERS = r";|,"
+PHONES_PATTERN = re.compile(
+    r"^[+]?\d{10,11}([" + PHONE_DELIMITERS + r"][+]?\d{10,11}){0,}$"
+)
+
+
+def convert_phones(ctx, param, value):
+    """
+    Очищает строку с телефонами от пробельных символов, проверяет её на валидность и
+    возвращает список телефонов для рассылки.
+    """
+    phones = re.sub(r"\s+", "", value)
+
+    if not PHONES_PATTERN.match(phones):
+        raise click.BadParameter("Номера телефонов должны содержать только цифры")
+
+    return re.split(PHONE_DELIMITERS, phones)
+
 
 class Message(BaseModel):
-    phones: constr(
-        strip_whitespace=True, pattern=r"^[+]?\d{10,11}([;|,][+]?\d{10,11}){0,}$"
-    )
+    phones: list[constr(pattern=r"^[+]?\d{10,11}$")]
     mes: constr(min_length=5)
     valid: conint(ge=1, le=24)
+
+    @field_serializer("phones")
+    def serialize_phones(self, phones: list, _info):
+        return ",".join(phones)
 
 
 class Settings(BaseSettings):
@@ -77,9 +102,11 @@ async def send_message():
     message = Message(
         valid=app.config["VALID"], phones=app.config["PHONES"], mes=form["text"]
     )
-    response = await request_smsc(
-        HttpMethod.post, SEND_URL, payload=message.model_dump()
-    )
+    with patch("asks.post") as mock_function:
+        mock_function.return_value = MockSuccessResponse()
+        response = await request_smsc(
+            HttpMethod.post, SEND_URL, payload=message.model_dump()
+        )
     print(f"Статус ответа {response.status_code}, ответ {response.content}")
 
     return redirect(url_for("hello"))
@@ -96,10 +123,17 @@ async def send_message():
 @click.option(
     "--phones",
     required=True,
-    callback=validate_phones,
+    callback=convert_phones,
     help="Номер телефона или несколько номеров через запятую или точку с запятой.",
 )
-async def run_server(valid, phones):
+@click.option(
+    "-r",
+    "--redis",
+    "redis_uri",
+    help="Адрес сервера REDIS для хранения информации о рассылках.",
+    default="redis://localhost",
+)
+async def run_server(valid, phones, redis_uri):
     async with trio_asyncio.open_loop():
         config = HyperConfig()
         config.bind = ["127.0.0.1:5000"]
@@ -112,6 +146,9 @@ async def run_server(valid, phones):
         app.config.from_prefixed_env()
         app.config["VALID"] = valid
         app.config["PHONES"] = phones
+
+        redis = aioredis.from_url(redis_uri, decode_responses=True)
+        app.config["REDIS_DB"] = Database(redis)
 
         await serve(app, config)
 
