@@ -1,7 +1,31 @@
+from random import randint, choice
 from unittest.mock import patch
 
 from mchs_sms.smsc_api import request_smsc, HttpMethod, SEND_URL
 
+
+class MockSuccessResponse:
+    """Пример успешного ответа sms-сервиса после отправки сообщений"""
+
+    status_code = 200
+
+    @staticmethod
+    def json():
+        return {"id": 430, "cnt": 2}
+
+class MockSendStatusResponse:
+
+    status_code = 200
+
+    def __init__(self):
+        self.__status = choice([randint(-3, 4), randint(20, 25)])
+
+    def json(self):
+        return {
+            'status': self.__status,
+            'last_date': '28.12.2019 19:20:22',
+            'last_timestamp': 1577550022
+        }
 
 class MockSuccessResponse:
     """Пример успешного ответа sms-сервиса после отправки сообщений"""
