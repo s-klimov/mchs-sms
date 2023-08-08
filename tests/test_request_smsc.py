@@ -11,7 +11,7 @@ class MockSuccessResponse:
 
     @staticmethod
     def json():
-        return {"id": 430, "cnt": 2}
+        return {"id": randint(1, 2000), "cnt": randint(100, 30000)}
 
 
 class MockSendStatusResponse:
