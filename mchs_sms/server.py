@@ -2,6 +2,7 @@ import collections
 import re
 from enum import IntEnum
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 import aioredis
 import trio
@@ -164,6 +165,7 @@ async def ws():
 
 
 @app.route("/send/", methods=["POST"])
+# FIXME сделать декоратор backoff для обработки ошибки HTTPError
 async def send_message():
     form = await request.form
 
@@ -172,9 +174,13 @@ async def send_message():
     )
     with patch("asks.post") as mock_function:
         mock_function.return_value = MockSuccessResponse()
-        response = await request_smsc(
-            HttpMethod.post, SEND_URL, payload=message.model_dump()
-        )
+        try:
+            response = await request_smsc(
+                HttpMethod.post, SEND_URL, payload=message.model_dump()
+            )
+        except HTTPError:
+            return {"errorMessage": "Потеряно соединение с SMSC.ru"}
+
     print(f"Статус ответа {response.status_code}, ответ {response.content}")
 
     db = app.config["REDIS_DB"]
@@ -190,7 +196,7 @@ async def send_message():
     print("pending:")
     print(pending_sms_list)
 
-    return redirect(url_for("hello"))
+    return pending_sms_list
 
 
 @click.command()
