@@ -1,3 +1,4 @@
+import collections
 import re
 from enum import IntEnum
 from unittest.mock import patch
@@ -20,7 +21,8 @@ from mchs_sms.smsc_api import (
     smsc_password,  # FIXME убрать импорт контекстной переменной
     HttpMethod,
     SEND_URL,
-    request_smsc, STATUS_URL,
+    request_smsc,
+    STATUS_URL,
 )
 from tests.test_request_smsc import MockSuccessResponse, MockSendStatusResponse
 
@@ -54,8 +56,8 @@ class Message(BaseModel):
     def serialize_phones(self, phones: list, _info):
         return ",".join(phones)
 
-class Status(BaseModel):
 
+class Status(BaseModel):
     class Number(IntEnum):
         """
         Формат ответа сервера:
@@ -64,6 +66,7 @@ class Status(BaseModel):
             2 – в xml формате.
             3 – в json формате.
         """
+
         ZERO = 0
         ONE = 1
         TWO = 2
@@ -97,72 +100,67 @@ async def ws():
     Документация по статусам https://smsc.ru/api/http/status_messages/statuses/#menu
     """
 
-    verbose = lambda _status: "delivered" if _status in (1, 2, 4) else "pending" if _status in (-1, 0) else "failed"
+    verbose = (
+        lambda _status: "delivered"
+        if _status in (1, 2, 4)
+        else "pending"
+        if _status in (-1, 0)
+        else "failed"
+    )
 
-    messages = {
-        "msgType": "SMSMailingStatus",
-        "SMSMailings": [
-            {
-                "timestamp": 1123131392.734,
-                "SMSText": "Сегодня гроза! Будьте осторожны!",
-                "mailingId": "1",
-                "totalSMSAmount": 345,
-                "deliveredSMSAmount": 47,
-                "failedSMSAmount": 5,
-            },
-            {
-                "timestamp": 1323141112.924422,
-                "SMSText": "Новогодняя акция!!! Приходи в магазин и получи скидку!!!",
-                "mailingId": "new-year",
-                "totalSMSAmount": 3993,
-                "deliveredSMSAmount": 801,
-                "failedSMSAmount": 0,
-            },
-        ],
-    }
+    db = app.config["REDIS_DB"]
 
-    while True:
-        db = app.config["REDIS_DB"]
+    pending_sms_list = await trio_asyncio.aio_as_trio(db.get_pending_sms_list)()
+    print("pending:")
+    print(pending_sms_list)
 
-        sms_ids = await trio_asyncio.aio_as_trio(db.list_sms_mailings)()
-        print("Registered mailings ids", sms_ids)
+    statuses = list()
 
-        pending_sms_list = await trio_asyncio.aio_as_trio(db.get_pending_sms_list)()
-        print("pending:")
-        print(pending_sms_list)
+    for pending_sms in pending_sms_list:
+        with patch("asks.get") as mock_function:
+            mock_function.return_value = MockSendStatusResponse()
+            phone, sms_id = pending_sms[1], pending_sms[0]
+            status = Status(phone=phone, id=sms_id)
+            response = await request_smsc(
+                HttpMethod.get, STATUS_URL, payload=status.model_dump()
+            )
 
-        statuses = list()
-
-        for pending_sms in pending_sms_list:
-            with patch("asks.post") as mock_function:
-                mock_function.return_value = MockSendStatusResponse()
-                phone, sms_id = pending_sms[1], pending_sms[0]
-                status = Status(phone=phone, id=sms_id)
-                response = await request_smsc(
-                    HttpMethod.get, STATUS_URL, payload=status.model_dump()
-                )
-
-                if response.content["status_code"] == 200:
-                    statuses.append([
+            if response.status_code == 200:
+                statuses.append(
+                    [
                         sms_id,
                         phone,
-                        verbose(response.json()["status"]),
-                    ])
+                        verbose(response.content["status"]),
+                    ]
+                )
 
-        # TODO написать код для формирования messages
+    await trio_asyncio.aio_as_trio(db.update_sms_status_in_bulk)(statuses)
 
-        await trio_asyncio.aio_as_trio(db.update_sms_status_in_bulk)(statuses)
+    sms_ids = await trio_asyncio.aio_as_trio(db.list_sms_mailings)()
+    print("Registered mailings ids", sms_ids)
 
-        pending_sms_list = await trio_asyncio.aio_as_trio(db.get_pending_sms_list)()
-        print("pending:")
-        print(pending_sms_list)
+    sms_mailings = await trio_asyncio.aio_as_trio(db.get_sms_mailings)(*sms_ids)
+    print("sms_mailings")
+    print(sms_mailings)
 
-        sms_mailings = await trio_asyncio.aio_as_trio(db.get_sms_mailings)("1")
-        print("sms_mailings")
-        print(sms_mailings)
-
-        await websocket.send_json(messages)
-        await trio.sleep(1)
+    messages = {"msgType": "SMSMailingStatus", "SMSMailings": []}
+    for sms_mailing in sms_mailings:
+        messages["SMSMailings"].append(
+            {
+                "timestamp": sms_mailing["created_at"],
+                "SMSText": sms_mailing["text"],
+                "mailingId": str(sms_mailing["sms_id"]),
+                "totalSMSAmount": sms_mailing["phones_count"],
+                "deliveredSMSAmount": collections.Counter(
+                    sms_mailing["phones"].values()
+                )["delivered"],
+                "failedSMSAmount": collections.Counter(sms_mailing["phones"].values())[
+                    "failed"
+                ],
+            }
+        )
+    print(messages)
+    await websocket.send_json(messages)
 
 
 @app.route("/send/", methods=["POST"])
@@ -181,7 +179,9 @@ async def send_message():
 
     db = app.config["REDIS_DB"]
 
-    await trio_asyncio.aio_as_trio(db.add_sms_mailing)(response.content["id"], message.phones, message.mes)
+    await trio_asyncio.aio_as_trio(db.add_sms_mailing)(
+        response.content["id"], message.phones, message.mes
+    )
 
     sms_ids = await trio_asyncio.aio_as_trio(db.list_sms_mailings)()
     print("Registered mailings ids", sms_ids)
