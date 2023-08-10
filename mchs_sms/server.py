@@ -1,5 +1,8 @@
 import collections
+import json
+import logging
 import re
+import warnings
 from enum import IntEnum
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -11,10 +14,11 @@ from hypercorn.trio import serve
 from hypercorn.config import Config as HyperConfig
 from pydantic import BaseModel, constr, conint, Field, field_serializer
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from quart import render_template, redirect, request, url_for, websocket
+from quart import render_template, request, websocket
 
 import asyncclick as click
 from quart_trio import QuartTrio
+from trio import TrioDeprecationWarning
 
 from mchs_sms.db import Database
 from mchs_sms.smsc_api import (
@@ -28,10 +32,20 @@ from mchs_sms.smsc_api import (
 from tests.test_request_smsc import MockSuccessResponse, MockSendStatusResponse
 
 app = QuartTrio(__name__)
+warnings.filterwarnings(action="ignore", category=TrioDeprecationWarning)
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s: %(name)s: %(message)s",
+    datefmt="%m/%d/%Y %H:%M:%S",
+)
+logger = logging.getLogger("server")
 
-PHONE_DELIMITERS = r"\n|,\n?|;\n?"
+PHONE_DELIMITERS = r"[;|,]"
 PHONES_PATTERN = re.compile(
-    r"^[+]?\d{10,11}([" + PHONE_DELIMITERS + r"][+]?\d{10,11}){0,}$"
+    r"^[+]?\d{10,11}("
+    + PHONE_DELIMITERS
+    + r"+[+]?\d{10,11}){0,}"
+    + PHONE_DELIMITERS
+    + "*$"
 )
 
 
@@ -42,14 +56,35 @@ def convert_phones(ctx, param, value):
     """
 
     with open(value) as fd:
-        unverified = re.sub(r"\s+", "", fd.read())
+        phones_str = re.sub(r"\s+", "", fd.read())
 
-    phones = re.sub(r"\s+", "", unverified)
+    if not PHONES_PATTERN.match(phones_str):
+        raise click.BadParameter(
+            "Номера телефонов должны содержать только цифры и "
+            "разделены между собой через точку с запятой"
+        )
 
-    if not PHONES_PATTERN.match(phones):
-        raise click.BadParameter("Номера телефонов должны содержать только цифры")
+    phones = re.split(PHONE_DELIMITERS, phones_str)
+    if phones[-1] == "":
+        phones.remove("")
 
-    return re.split(PHONE_DELIMITERS, phones)
+    logger.debug(
+        "Список рассылки (первые 10 телефонов) {}".format("; ".join(phones[:10]))
+    )
+    return phones
+
+
+def get_log_level(ctx, param, value):
+    """Преобразует количество указанных v (verbose) в параметрах скрипта к уровню логирования"""
+    levels = [
+        logging.ERROR,
+        logging.WARNING,
+        logging.INFO,
+        logging.DEBUG,
+    ]
+    level = levels[min(value, len(levels) - 1)]
+
+    return level
 
 
 class Message(BaseModel):
@@ -116,8 +151,9 @@ async def ws():
     db = app.config["REDIS_DB"]
 
     pending_sms_list = await trio_asyncio.aio_as_trio(db.get_pending_sms_list)()
-    print("pending:")
-    print(pending_sms_list)
+    logger.debug(
+        "pending: {}".format(json.dumps(pending_sms_list[:10], ensure_ascii=False))
+    )
 
     statuses = list()
 
@@ -142,11 +178,16 @@ async def ws():
     await trio_asyncio.aio_as_trio(db.update_sms_status_in_bulk)(statuses)
 
     sms_ids = await trio_asyncio.aio_as_trio(db.list_sms_mailings)()
-    print("Registered mailings ids", sms_ids)
+    logger.info(
+        "Registered mailings ids {}".format(
+            json.dumps(sms_ids[:10], ensure_ascii=False)
+        )
+    )
 
     sms_mailings = await trio_asyncio.aio_as_trio(db.get_sms_mailings)(*sms_ids)
-    print("sms_mailings")
-    print(sms_mailings)
+    logger.debug(
+        "sms_mailings {}".format(json.dumps(sms_mailings[:10], ensure_ascii=False))
+    )
 
     messages = {"msgType": "SMSMailingStatus", "SMSMailings": []}
     for sms_mailing in sms_mailings:
@@ -164,7 +205,7 @@ async def ws():
                 ],
             }
         )
-    print(messages)
+    logger.debug("{}".format(json.dumps(messages, indent=4, ensure_ascii=False)))
     await websocket.send_json(messages)
 
 
@@ -185,7 +226,11 @@ async def send_message():
         except HTTPError:
             return {"errorMessage": "Потеряно соединение с SMSC.ru"}
 
-    print(f"Статус ответа {response.status_code}, ответ {response.content}")
+    logger.info(
+        "Статус ответа {status}, ответ {content}".format(
+            status=response.status_code, content=response.content
+        )
+    )
 
     db = app.config["REDIS_DB"]
 
@@ -193,12 +238,10 @@ async def send_message():
         response.content["id"], message.phones, message.mes
     )
 
-    sms_ids = await trio_asyncio.aio_as_trio(db.list_sms_mailings)()
-    print("Registered mailings ids", sms_ids)
-
     pending_sms_list = await trio_asyncio.aio_as_trio(db.get_pending_sms_list)()
-    print("pending:")
-    print(pending_sms_list)
+    logger.debug(
+        "pending: {}".format(json.dumps(pending_sms_list[:10], ensure_ascii=False))
+    )
 
     return pending_sms_list
 
@@ -215,7 +258,7 @@ async def send_message():
     "--phones",
     required=True,
     callback=convert_phones,
-    help="Номер телефона или несколько номеров через запятую или точку с запятой.",
+    help="Путь до текстового файла с перечнем номеров телефонов.",
 )
 @click.option(
     "-r",
@@ -224,7 +267,14 @@ async def send_message():
     help="Адрес сервера REDIS для хранения информации о рассылках.",
     default="redis://localhost",
 )
-async def run_server(valid, phones, redis_uri):
+@click.option(
+    "-v",
+    "--verbose",
+    count=True,
+    callback=get_log_level,
+    help="Настройка логирования.",
+)  # https://click.palletsprojects.com/en/8.1.x/options/#counting
+async def run_server(valid, phones, redis_uri, verbose):
     async with trio_asyncio.open_loop():
         config = HyperConfig()
         config.bind = ["127.0.0.1:5000"]
@@ -241,9 +291,10 @@ async def run_server(valid, phones, redis_uri):
         redis = aioredis.from_url(redis_uri, decode_responses=True)
         app.config["REDIS_DB"] = Database(redis)
 
+        logger.setLevel(verbose)
+
         await serve(app, config)
 
 
 if __name__ == "__main__":
     trio.run(run_server(_anyio_backend="trio"))
-    # https: // github.com / nstonic / sms_for_mchs / blob / main / server.py

@@ -124,5 +124,5 @@ class Database:
 
     async def list_sms_mailings(self):
         """Return list of sms_id for all registered SMS mailings."""
-        keys = await self.redis.keys(f"sms_mailing_*")
+        keys = await self.redis.keys(f"sms_mailing_*")  # noqa F541
         return [key.split("_")[-1] for key in keys]

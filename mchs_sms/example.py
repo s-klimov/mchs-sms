@@ -16,7 +16,7 @@ def create_argparser():
         "--address",
         action="store",
         dest="redis_uri",
-        help="Redis URL. See examples at https://aioredis.readthedocs.io/en/latest/api/high-level/#aioredis.client.Redis.from_url",
+        help="Redis URL. See examples at https://aioredis.readthedocs.io/en/latest/api/high-level/#aioredis.client.Redis.from_url",  # noqa E501
         default="redis://localhost",
     )
     return parser

@@ -1,3 +1,5 @@
+"""Консольный скрипт отправки sms-сообщений через сервис smsc.ru"""
+
 import json
 import re
 import time

@@ -14,13 +14,16 @@
 poetry install 
 ```
 
-### Как запустить бэкенд
+### Создание списка рассылки
+Запишите перечень номеров телефонов в формате +79998886655 (без скобок и дефисов) через точку с запятой в текстовый файл.
+
+### Запуск сервера
 ```bash
 export SMSC_LOGIN=devman
 export SMSC_PSW=Ab6Kinhyxquot
 export SMSC_VALID=1
 export REDIS_URL=redis://127.0.0.1:6379/0
-poetry run python mchs_sms/smsc_api.py 
+poetry run python mchs_sms/server.py --phones mchs_sms/phones.txt 
 ```
 
 ## Получение данных из формы
