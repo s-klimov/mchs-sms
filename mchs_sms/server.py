@@ -29,7 +29,7 @@ from tests.test_request_smsc import MockSuccessResponse, MockSendStatusResponse
 
 app = QuartTrio(__name__)
 
-PHONE_DELIMITERS = r";|,"
+PHONE_DELIMITERS = r"\n|,\n?|;\n?"
 PHONES_PATTERN = re.compile(
     r"^[+]?\d{10,11}([" + PHONE_DELIMITERS + r"][+]?\d{10,11}){0,}$"
 )
@@ -40,7 +40,11 @@ def convert_phones(ctx, param, value):
     Очищает строку с телефонами от пробельных символов, проверяет её на валидность и
     возвращает список телефонов для рассылки.
     """
-    phones = re.sub(r"\s+", "", value)
+
+    with open(value) as fd:
+        unverified = re.sub(r"\s+", "", fd.read())
+
+    phones = re.sub(r"\s+", "", unverified)
 
     if not PHONES_PATTERN.match(phones):
         raise click.BadParameter("Номера телефонов должны содержать только цифры")
