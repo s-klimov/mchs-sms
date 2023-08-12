@@ -68,9 +68,7 @@ def convert_phones(ctx, param, value):
     if phones[-1] == "":
         phones.remove("")
 
-    logger.debug(
-        "Список рассылки (первые 10 телефонов) {}".format("; ".join(phones[:10]))
-    )
+    logger.debug("phone list (first 10 copies) %s", "; ".join(phones[:10]))
     return phones
 
 
@@ -151,9 +149,7 @@ async def ws():
     db = app.config["REDIS_DB"]
 
     pending_sms_list = await trio_asyncio.aio_as_trio(db.get_pending_sms_list)()
-    logger.debug(
-        "pending: {}".format(json.dumps(pending_sms_list[:10], ensure_ascii=False))
-    )
+    logger.debug("pending: %s", json.dumps(pending_sms_list[:10], ensure_ascii=False))
 
     statuses = list()
 
@@ -178,16 +174,10 @@ async def ws():
     await trio_asyncio.aio_as_trio(db.update_sms_status_in_bulk)(statuses)
 
     sms_ids = await trio_asyncio.aio_as_trio(db.list_sms_mailings)()
-    logger.info(
-        "Registered mailings ids {}".format(
-            json.dumps(sms_ids[:10], ensure_ascii=False)
-        )
-    )
+    logger.info("Registered mailings ids %s", json.dumps(sms_ids[:10], ensure_ascii=False))
 
     sms_mailings = await trio_asyncio.aio_as_trio(db.get_sms_mailings)(*sms_ids)
-    logger.debug(
-        "sms_mailings {}".format(json.dumps(sms_mailings[:10], ensure_ascii=False))
-    )
+    logger.debug("sms_mailings %s", json.dumps(sms_mailings[:10], ensure_ascii=False))
 
     messages = {"msgType": "SMSMailingStatus", "SMSMailings": []}
     for sms_mailing in sms_mailings:
@@ -205,7 +195,7 @@ async def ws():
                 ],
             }
         )
-    logger.debug("{}".format(json.dumps(messages, indent=4, ensure_ascii=False)))
+    logger.debug("%s", json.dumps(messages, indent=4, ensure_ascii=False))
     await websocket.send_json(messages)
 
 
@@ -226,11 +216,7 @@ async def send_message():
         except HTTPError:
             return {"errorMessage": "Потеряно соединение с SMSC.ru"}
 
-    logger.info(
-        "Статус ответа {status}, ответ {content}".format(
-            status=response.status_code, content=response.content
-        )
-    )
+    logger.info("response status %d, ответ %s", response.status_code, response.content)
 
     db = app.config["REDIS_DB"]
 
@@ -239,9 +225,7 @@ async def send_message():
     )
 
     pending_sms_list = await trio_asyncio.aio_as_trio(db.get_pending_sms_list)()
-    logger.debug(
-        "pending: {}".format(json.dumps(pending_sms_list[:10], ensure_ascii=False))
-    )
+    logger.debug("pending: %s", json.dumps(pending_sms_list[:10], ensure_ascii=False))
 
     return pending_sms_list
 
