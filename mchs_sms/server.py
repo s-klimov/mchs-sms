@@ -86,6 +86,8 @@ def get_log_level(ctx, param, value):
 
 
 class Message(BaseModel):
+    """Класс сообщения"""
+
     phones: list[constr(pattern=r"^[+]?\d{10,11}$")]
     mes: constr(min_length=5)
     valid: conint(ge=1, le=24)
@@ -96,6 +98,8 @@ class Message(BaseModel):
 
 
 class Status(BaseModel):
+    """Класс для хранения статуса ответа"""
+
     class Number(IntEnum):
         """
         Формат ответа сервера:
@@ -120,6 +124,8 @@ class Status(BaseModel):
 
 
 class Settings(BaseSettings):
+    """Класс настроек для запуска скрипта"""
+
     model_config = SettingsConfigDict(env_prefix="SMSC_")
 
     login: str = Field(description="Логин для авторизации на сервисе smsc.ru.")
@@ -203,6 +209,7 @@ async def ws():
 
 @app.route("/send/", methods=["POST"])
 async def send_message():
+    """Отправляет сообщение пользователя на сервис SMSC.ru"""
     form = await request.form
 
     message = Message(
@@ -260,6 +267,10 @@ async def send_message():
     help="Настройка логирования.",
 )  # https://click.palletsprojects.com/en/8.1.x/options/#counting
 async def run_server(valid, phones, redis_uri, verbose):
+    """
+    Запускает цикл событий для отслеживания поступающих сообщений пользователя
+    и рендеринга статусов отправленных сообщений
+    """
     async with trio_asyncio.open_loop():
         config = HyperConfig()
         config.bind = ["127.0.0.1:5000"]
