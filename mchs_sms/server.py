@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import warnings
+from contextvars import ContextVar
 from enum import IntEnum
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -22,8 +23,6 @@ from trio import TrioDeprecationWarning
 
 from mchs_sms.db import Database
 from mchs_sms.smsc_api import (
-    smsc_login,  # FIXME убрать импорт контекстной переменной
-    smsc_password,  # FIXME убрать импорт контекстной переменной
     HttpMethod,
     SEND_URL,
     request_smsc,
@@ -32,6 +31,8 @@ from mchs_sms.smsc_api import (
 from tests.test_request_smsc import MockSuccessResponse, MockSendStatusResponse
 
 app = QuartTrio(__name__)
+smsc_login: ContextVar[str] = ContextVar("smsc_login")
+smsc_password: ContextVar[str] = ContextVar("smsc_password")
 warnings.filterwarnings(action="ignore", category=TrioDeprecationWarning)
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s: %(name)s: %(message)s",
