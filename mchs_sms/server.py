@@ -174,7 +174,9 @@ async def ws():
     await trio_asyncio.aio_as_trio(db.update_sms_status_in_bulk)(statuses)
 
     sms_ids = await trio_asyncio.aio_as_trio(db.list_sms_mailings)()
-    logger.info("Registered mailings ids %s", json.dumps(sms_ids[:10], ensure_ascii=False))
+    logger.info(
+        "Registered mailings ids %s", json.dumps(sms_ids[:10], ensure_ascii=False)
+    )
 
     sms_mailings = await trio_asyncio.aio_as_trio(db.get_sms_mailings)(*sms_ids)
     logger.debug("sms_mailings %s", json.dumps(sms_mailings[:10], ensure_ascii=False))
